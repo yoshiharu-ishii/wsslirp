@@ -110,6 +110,13 @@ func Run(ctx context.Context, fio FrameIO, cfg Config) error {
 		if ns.maybeHandleICMP(frame, fio) {
 			continue
 		}
+		if ns.isArpForGuest(frame) {
+			// ゲスト自身のIPへのARPには誰も答えてはいけない。
+			// netstackはspoofing有効で何にでも代返するので、ここで落とす。
+			// mTCPは起動時にこのARPでアドレス衝突を検査していて、
+			// 代返すると「他のマシンが10.0.2.15を使っている」と誤検出する
+			continue
+		}
 		ns.inject(frame)
 	}
 }

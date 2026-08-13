@@ -3,6 +3,7 @@ package slirpstack
 import (
 	"encoding/binary"
 	"net"
+	"net/netip"
 
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
@@ -38,6 +39,20 @@ func (ns *netstack) maybeHandleDHCP(frame []byte, fio FrameIO) bool {
 	}
 	ns.cfg.Logf("dhcp: %s -> %s (%s)", dhcpMsgType(req), replyType, ns.cfg.GuestIP)
 	return true
+}
+
+// isArpForGuest reports whether frame is an ARP request asking about the
+// guest's own IP (including RFC 5227 address-conflict probes with a zero
+// sender). Nobody on a real LAN would answer those unless the address is
+// actually taken, so the relay must stay silent too.
+func (ns *netstack) isArpForGuest(frame []byte) bool {
+	pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, gopacket.Default)
+	arp, ok := pkt.Layer(layers.LayerTypeARP).(*layers.ARP)
+	if !ok || arp.Operation != layers.ARPRequest {
+		return false
+	}
+	target, ok := netip.AddrFromSlice(arp.DstProtAddress)
+	return ok && target == ns.cfg.GuestIP
 }
 
 func dhcpMsgType(d *layers.DHCPv4) layers.DHCPMsgType {
