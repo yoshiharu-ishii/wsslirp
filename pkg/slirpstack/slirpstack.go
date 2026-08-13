@@ -46,6 +46,11 @@ type Config struct {
 	// Defaults to a net.Dialer with a 10s timeout. Tests override this.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
+	// Ping sends one ICMP echo carrying data to dst and returns the
+	// reply payload. seq is the guest's sequence number. Defaults to an
+	// unprivileged ping socket. Tests override this.
+	Ping func(ctx context.Context, dst netip.Addr, seq int, data []byte) ([]byte, error)
+
 	Logf func(format string, args ...any)
 }
 
@@ -72,6 +77,9 @@ func (c Config) withDefaults() Config {
 		d := &net.Dialer{Timeout: 10 * time.Second}
 		c.DialContext = d.DialContext
 	}
+	if c.Ping == nil {
+		c.Ping = systemPing
+	}
 	if c.Logf == nil {
 		c.Logf = func(string, ...any) {}
 	}
@@ -97,6 +105,9 @@ func Run(ctx context.Context, fio FrameIO, cfg Config) error {
 			return err
 		}
 		if ns.maybeHandleDHCP(frame, fio) {
+			continue
+		}
+		if ns.maybeHandleICMP(frame, fio) {
 			continue
 		}
 		ns.inject(frame)

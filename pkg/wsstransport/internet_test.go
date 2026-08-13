@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
 
 	"github.com/yoshiharu-ishii/wsslirp/internal/testutil"
 	"github.com/yoshiharu-ishii/wsslirp/pkg/wsstransport"
@@ -105,4 +107,68 @@ func TestRealInternet(t *testing.T) {
 		t.Fatalf("unexpected response: %q", status)
 	}
 	t.Logf("http: %s from example.com via %s", status, target)
+}
+
+// TestRealInternetPing hand-crafts an ICMP echo request frame to 1.1.1.1
+// and expects the proxied reply, exercising the outbound ping path
+// against the real network. Gated by WSSLIRP_E2E_URL like TestRealInternet.
+// On Linux the daemon needs net.ipv4.ping_group_range to cover its group.
+func TestRealInternetPing(t *testing.T) {
+	url := os.Getenv("WSSLIRP_E2E_URL")
+	if url == "" {
+		t.Skip("set WSSLIRP_E2E_URL to run the real-internet test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	c, _, err := websocket.Dial(ctx, url, nil)
+	if err != nil {
+		t.Fatalf("websocket dial %s: %v", url, err)
+	}
+	defer c.Close(websocket.StatusNormalClosure, "")
+	c.SetReadLimit(1 << 16)
+	fio := wsstransport.NewConnFrameIO(ctx, c)
+
+	eth := layers.Ethernet{
+		SrcMAC:       net.HardwareAddr{0x52, 0x55, 0x0a, 0x00, 0x02, 0x0f},
+		DstMAC:       net.HardwareAddr{0x52, 0x55, 0x0a, 0x00, 0x02, 0x02},
+		EthernetType: layers.EthernetTypeIPv4,
+	}
+	ip := layers.IPv4{
+		Version:  4,
+		TTL:      64,
+		Protocol: layers.IPProtocolICMPv4,
+		SrcIP:    net.IP{10, 0, 2, 15},
+		DstIP:    net.IP{1, 1, 1, 1},
+	}
+	icmp := layers.ICMPv4{
+		TypeCode: layers.CreateICMPv4TypeCode(layers.ICMPv4TypeEchoRequest, 0),
+		Id:       0xbeef,
+		Seq:      1,
+	}
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	if err := gopacket.SerializeLayers(buf, opts, &eth, &ip, &icmp, gopacket.Payload([]byte("wsslirp-e2e-ping"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := fio.WriteFrame(buf.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := fio.ReadFrame()
+		if err != nil {
+			t.Fatalf("no echo reply from 1.1.1.1: %v", err)
+		}
+		pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, gopacket.Default)
+		ic, ok := pkt.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+		if !ok || ic.TypeCode.Type() != layers.ICMPv4TypeEchoReply || ic.Id != 0xbeef {
+			continue
+		}
+		rip := pkt.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+		if !rip.SrcIP.Equal(net.IP{1, 1, 1, 1}) {
+			t.Fatalf("echo reply from %v, want 1.1.1.1", rip.SrcIP)
+		}
+		t.Logf("ping: echo reply from %v (seq=%d, %d bytes)", rip.SrcIP, ic.Seq, len(ic.Payload))
+		return
+	}
 }
