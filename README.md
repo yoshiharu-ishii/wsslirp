@@ -1,6 +1,6 @@
 # wsslirp
 
-Ethernetフレームを吐く非特権ゲストのためのユーザーモードNATデーモン。
+Ethernetフレームを吐く非特権ゲストのための **SLiRP backend**(ユーザーモードNATデーモン)。
 
 ブラウザで動くエミュレータ([rustx86](https://github.com/yoshiharu-ishii/rustx86) WASM版)は生ソケットを持てない。そこでゲストOSの仮想NICが吐くEthernetフレームをWebSocketでそのまま運び、サーバー側のgVisor netstackでTCP/UDPを終端して、本物のソケットでインターネットへ出る。QEMUの `-netdev user`(内蔵slirp)を独立デーモンに切り出し、WebSocketという口を付けたもの、と考えると正確。
 
