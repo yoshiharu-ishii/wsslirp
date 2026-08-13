@@ -23,10 +23,11 @@ const (
 )
 
 type netstack struct {
-	ctx context.Context
-	cfg Config
-	s   *stack.Stack
-	ep  *channel.Endpoint
+	ctx   context.Context
+	cfg   Config
+	s     *stack.Stack
+	ep    *channel.Endpoint
+	pings chan struct{} // semaphore for in-flight outbound echoes
 }
 
 func newNetstack(ctx context.Context, cfg Config) (*netstack, error) {
@@ -42,7 +43,7 @@ func newNetstack(ctx context.Context, cfg Config) (*netstack, error) {
 		},
 	})
 	ep := channel.New(512, frameMTU, tcpip.LinkAddress(cfg.GatewayMAC))
-	ns := &netstack{ctx: ctx, cfg: cfg, s: s, ep: ep}
+	ns := &netstack{ctx: ctx, cfg: cfg, s: s, ep: ep, pings: make(chan struct{}, maxPings)}
 
 	if err := s.CreateNIC(nicID, ethernet.New(ep)); err != nil {
 		return nil, fmt.Errorf("CreateNIC: %s", err)

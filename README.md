@@ -45,13 +45,14 @@ slirp互換のレイアウト。ゲストごとに独立したスタックを作
 - DHCP応答はnetstackに入る前のフレーム層で処理(discover→offer、request→ack)
 - TCP: `tcp.NewForwarder` でゲストのTCPを終端し、`net.Dial` で張り直す。ハーフクローズは伝搬する(片方向のFINは `CloseWrite` で相手側に届き、逆方向は流れ続ける)
 - UDP: フローごとに転送、60秒アイドルで回収。10.0.2.3:53宛は上流DNSへ
+- ICMP: ゲートウェイ宛echoはスタック自身が応答。外向きecho requestは非特権pingソケット(SOCK_DGRAM + IPPROTO_ICMP)で代理送信し、応答をecho replyフレームで返す。macOSはそのまま動く。Linuxはデーモンのグループが sysctl `net.ipv4.ping_group_range` に入っている必要がある(入っていなければ外向きpingだけタイムアウトし、他は無影響)
 
 ## セキュリティ
 
 公開されたリレーは放っておくと踏み台(オープンプロキシ)になるため:
 
 - `-token` : 接続時の共有トークン認証(定数時間比較)
-- egressフィルタ: loopback・RFC1918・リンクローカル・マルチキャスト宛を遮断(SSRF対策)。開発時のみ `-allow-private` で解除
+- egressフィルタ: loopback・RFC1918・リンクローカル・マルチキャスト宛を遮断(SSRF対策)。TCP・UDP・外向きICMP echoすべてに適用。開発時のみ `-allow-private` で解除
 - ゲストのフレームは全てユーザーランドで処理され、ホストのネットワークスタックには触れない
 
 ## 使い方
@@ -83,7 +84,6 @@ WSSLIRP_E2E_URL='ws://127.0.0.1:8098/net?token=test' go test ./pkg/wsstransport 
 
 未実装。必要になった実測時点で取り出す:
 
-- 外向きICMP echoプロキシ(現状ゲートウェイへのpingのみ応答)
 - UDS / インプロセストランスポート
 - ゲストごとの帯域制限・メトリクス
 - IPv6
