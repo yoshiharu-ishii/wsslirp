@@ -6,7 +6,10 @@ package wsstransport
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"net/http"
+	"sync/atomic"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -37,15 +40,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.SetReadLimit(1 << 16)
-	logf := h.Config.Logf
-	if logf == nil {
-		logf = func(string, ...any) {}
+
+	// Every line this guest produces carries its id, so flows can be
+	// attributed when many guests share one daemon. The id is only
+	// tied to a real client by the connect line below.
+	cfg := h.Config
+	id := fmt.Sprintf("g%d", guestSeq.Add(1))
+	logf := func(string, ...any) {}
+	if h.Config.Logf != nil {
+		parent := h.Config.Logf
+		logf = func(format string, args ...any) {
+			parent("["+id+"] "+format, args...)
+		}
 	}
-	logf("guest connected: %s", r.RemoteAddr)
-	err = slirpstack.Run(r.Context(), NewConnFrameIO(r.Context(), c), h.Config)
-	logf("guest disconnected: %s (%v)", r.RemoteAddr, err)
+	cfg.Logf = logf
+
+	logf("guest connected from %s", r.RemoteAddr)
+	start := time.Now()
+	err = slirpstack.Run(r.Context(), NewConnFrameIO(r.Context(), c), cfg)
+	logf("guest disconnected after %s (%v)", time.Since(start).Round(time.Millisecond), err)
 	c.Close(websocket.StatusNormalClosure, "")
 }
+
+// guestSeq numbers guests within one daemon lifetime.
+var guestSeq atomic.Uint64
 
 type wsFrameIO struct {
 	ctx context.Context

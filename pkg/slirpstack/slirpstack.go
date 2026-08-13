@@ -51,6 +51,12 @@ type Config struct {
 	// unprivileged ping socket. Tests override this.
 	Ping func(ctx context.Context, dst netip.Addr, seq int, data []byte) ([]byte, error)
 
+	// LogFlows emits one audit line per flow (open and close, with byte
+	// counts per direction). Off by default: together the lines are a
+	// complete record of everywhere the guest went. Denials and errors
+	// are logged regardless.
+	LogFlows bool
+
 	Logf func(format string, args ...any)
 }
 

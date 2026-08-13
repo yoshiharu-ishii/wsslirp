@@ -37,7 +37,8 @@ func (ns *netstack) maybeHandleDHCP(frame []byte, fio FrameIO) bool {
 	if err := fio.WriteFrame(reply); err != nil {
 		ns.cfg.Logf("dhcp: write reply: %v", err)
 	}
-	ns.cfg.Logf("dhcp: %s -> %s (%s)", dhcpMsgType(req), replyType, ns.cfg.GuestIP)
+	ns.cfg.Logf("dhcp %s -> %s: %s leased to %s",
+		dhcpMsgType(req), replyType, ns.cfg.GuestIP, req.ClientHWAddr)
 	return true
 }
 

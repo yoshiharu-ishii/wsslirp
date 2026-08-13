@@ -107,9 +107,9 @@ func TestDHCPHandshake(t *testing.T) {
 	fio := startSlirp(t, slirpstack.Config{Logf: t.Logf})
 
 	steps := []struct {
-		send  layers.DHCPMsgType
-		want  layers.DHCPMsgType
-		xid   uint32
+		send layers.DHCPMsgType
+		want layers.DHCPMsgType
+		xid  uint32
 	}{
 		{layers.DHCPMsgTypeDiscover, layers.DHCPMsgTypeOffer, 0x11111111},
 		{layers.DHCPMsgTypeRequest, layers.DHCPMsgTypeAck, 0x22222222},
