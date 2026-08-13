@@ -42,6 +42,17 @@ func (ns *netstack) handleTCP(r *tcp.ForwarderRequest) {
 	go ns.proxyTCP(guest, target)
 }
 
+// closeWrite propagates one direction's FIN: the peer sees EOF but can
+// keep sending. Both gonet.TCPConn and net.TCPConn implement CloseWrite;
+// anything else falls back to a full close.
+func closeWrite(c net.Conn) {
+	if hc, ok := c.(interface{ CloseWrite() error }); ok {
+		hc.CloseWrite()
+		return
+	}
+	c.Close()
+}
+
 func (ns *netstack) proxyTCP(guest net.Conn, target string) {
 	defer guest.Close()
 	host, err := ns.cfg.DialContext(ns.ctx, "tcp", target)
@@ -52,15 +63,22 @@ func (ns *netstack) proxyTCP(guest net.Conn, target string) {
 	defer host.Close()
 	ns.cfg.Logf("tcp: %s connected", target)
 	done := make(chan struct{}, 2)
-	cp := func(dst io.Writer, src io.Reader) {
+	cp := func(dst, src net.Conn) {
 		io.Copy(dst, src)
+		closeWrite(dst)
 		done <- struct{}{}
 	}
 	go cp(host, guest)
 	go cp(guest, host)
-	select {
-	case <-done:
-	case <-ns.ctx.Done():
+	// A guest that shuts down its write side (e.g. an HTTP client after
+	// the request) must still receive the response, so wait for both
+	// directions, not just the first EOF.
+	for range 2 {
+		select {
+		case <-done:
+		case <-ns.ctx.Done():
+			return
+		}
 	}
 }
 
