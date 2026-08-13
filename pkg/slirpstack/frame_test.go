@@ -141,6 +141,51 @@ func TestDHCPHandshake(t *testing.T) {
 	}
 }
 
+// TestARPForGuestIPStaysSilent verifies address-conflict probes are not
+// answered: an ARP request for the guest's own IP must get no reply
+// (mTCP aborts with "IP address conflict!" if anyone answers), while the
+// gateway keeps answering for itself.
+func TestARPForGuestIPStaysSilent(t *testing.T) {
+	fio := startSlirp(t, slirpstack.Config{Logf: t.Logf})
+
+	arpFor := func(target net.IP, srcIP net.IP) []byte {
+		eth := layers.Ethernet{
+			SrcMAC:       guestMAC,
+			DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+			EthernetType: layers.EthernetTypeARP,
+		}
+		arp := layers.ARP{
+			AddrType:          layers.LinkTypeEthernet,
+			Protocol:          layers.EthernetTypeIPv4,
+			HwAddressSize:     6,
+			ProtAddressSize:   4,
+			Operation:         layers.ARPRequest,
+			SourceHwAddress:   guestMAC,
+			SourceProtAddress: srcIP.To4(),
+			DstHwAddress:      make([]byte, 6),
+			DstProtAddress:    target.To4(),
+		}
+		return serialize(t, &eth, &arp)
+	}
+
+	// RFC 5227の衝突検査そのもの: 送り元0.0.0.0で自分のIPを尋ねる
+	if err := fio.WriteFrame(arpFor(guestIP, net.IPv4zero)); err != nil {
+		t.Fatal(err)
+	}
+	// 続けてゲートウェイ宛 — こちらの応答が「沈黙の同期点」になる
+	if err := fio.WriteFrame(arpFor(gwIP, guestIP)); err != nil {
+		t.Fatal(err)
+	}
+	pkt := awaitFrame(t, fio, "gateway ARP reply", func(p gopacket.Packet) bool {
+		a, ok := p.Layer(layers.LayerTypeARP).(*layers.ARP)
+		return ok && a.Operation == layers.ARPReply
+	})
+	a := pkt.Layer(layers.LayerTypeARP).(*layers.ARP)
+	if !net.IP(a.SourceProtAddress).Equal(gwIP) {
+		t.Fatalf("ARP応答の名乗りが %v — ゲスト宛ARPに代返している疑い", net.IP(a.SourceProtAddress))
+	}
+}
+
 func buildARPRequest(t *testing.T) []byte {
 	eth := layers.Ethernet{
 		SrcMAC:       guestMAC,
