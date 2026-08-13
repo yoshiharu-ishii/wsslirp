@@ -88,6 +88,62 @@ func TestTCPThroughSlirp(t *testing.T) {
 	}
 }
 
+// TestTCPHalfClose covers FIN propagation: the guest sends its request
+// and shuts down the write side; the server replies only after seeing
+// EOF. Without half-close support the relay tears down both directions
+// on the first EOF and the response is lost.
+func TestTCPHalfClose(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				data, _ := io.ReadAll(c) // wait for the client's FIN
+				c.Write(append([]byte("resp:"), data...))
+				c.Close()
+			}()
+		}
+	}()
+
+	cfg := slirpstack.Config{
+		Logf: t.Logf,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("tcp", ln.Addr().String())
+		},
+	}
+	g := startGuest(t, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := g.DialTCP(ctx, netip.MustParseAddrPort("192.0.2.10:9999"))
+	if err != nil {
+		t.Fatalf("guest dial: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.(interface{ CloseWrite() error }).CloseWrite(); err != nil {
+		t.Fatalf("guest CloseWrite: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read response after half-close: %v", err)
+	}
+	if string(got) != "resp:ping" {
+		t.Fatalf("response = %q, want %q", got, "resp:ping")
+	}
+}
+
 // TestEgressDenied verifies the SSRF guard: private destinations are
 // refused with a RST before any host dial happens.
 func TestEgressDenied(t *testing.T) {

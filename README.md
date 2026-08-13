@@ -43,7 +43,7 @@ slirp互換のレイアウト。ゲストごとに独立したスタックを作
 | 10.0.2.15 | ゲストのアドレス(DHCPリース) |
 
 - DHCP応答はnetstackに入る前のフレーム層で処理(discover→offer、request→ack)
-- TCP: `tcp.NewForwarder` でゲストのTCPを終端し、`net.Dial` で張り直す
+- TCP: `tcp.NewForwarder` でゲストのTCPを終端し、`net.Dial` で張り直す。ハーフクローズは伝搬する(片方向のFINは `CloseWrite` で相手側に届き、逆方向は流れ続ける)
 - UDP: フローごとに転送、60秒アイドルで回収。10.0.2.3:53宛は上流DNSへ
 
 ## セキュリティ
@@ -84,7 +84,6 @@ WSSLIRP_E2E_URL='ws://127.0.0.1:8098/net?token=test' go test ./pkg/wsstransport 
 未実装。必要になった実測時点で取り出す:
 
 - 外向きICMP echoプロキシ(現状ゲートウェイへのpingのみ応答)
-- TCPハーフクローズの伝搬
 - UDS / インプロセストランスポート
 - ゲストごとの帯域制限・メトリクス
 - IPv6
