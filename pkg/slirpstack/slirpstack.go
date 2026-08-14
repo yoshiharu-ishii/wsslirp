@@ -13,6 +13,9 @@ import (
 	"net"
 	"net/netip"
 	"time"
+
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
 )
 
 // FrameIO carries Ethernet frames between a guest and the slirp stack.
@@ -110,21 +113,36 @@ func Run(ctx context.Context, fio FrameIO, cfg Config) error {
 		if err != nil {
 			return err
 		}
-		if ns.maybeHandleDHCP(frame, fio) {
-			continue
-		}
-		if ns.maybeHandleICMP(frame, fio) {
-			continue
-		}
-		if ns.isArpForGuest(frame) {
-			// ゲスト自身のIPへのARPには誰も答えてはいけない。
-			// netstackはspoofing有効で何にでも代返するので、ここで落とす。
-			// mTCPは起動時にこのARPでアドレス衝突を検査していて、
-			// 代返すると「他のマシンが10.0.2.15を使っている」と誤検出する
-			continue
-		}
-		ns.inject(frame)
+		ns.dispatch(frame, fio)
 	}
+}
+
+// dispatchOpts decodes lazily (layers are parsed only when a handler
+// asks for them) and without copying (the parsed layers point into
+// frame). Nothing parsed here may outlive dispatch: the ICMP path
+// snapshots what it needs before going async, and inject copies the
+// frame into netstack's own storage.
+var dispatchOpts = gopacket.DecodeOptions{Lazy: true, NoCopy: true}
+
+// dispatch classifies one guest frame. The three checks share a single
+// parse — each one used to build its own packet, which cost more than
+// the work they were deciding about.
+func (ns *netstack) dispatch(frame []byte, fio FrameIO) {
+	pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, dispatchOpts)
+	if ns.maybeHandleDHCP(pkt, fio) {
+		return
+	}
+	if ns.maybeHandleICMP(pkt, fio) {
+		return
+	}
+	if ns.isArpForGuest(pkt) {
+		// ゲスト自身のIPへのARPには誰も答えてはいけない。
+		// netstackはspoofing有効で何にでも代返するので、ここで落とす。
+		// mTCPは起動時にこのARPでアドレス衝突を検査していて、
+		// 代返すると「他のマシンが10.0.2.15を使っている」と誤検出する
+		return
+	}
+	ns.inject(frame)
 }
 
 // Logger returns a Logf writing through the standard logger with a prefix.
