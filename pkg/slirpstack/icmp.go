@@ -41,32 +41,36 @@ func (ns *netstack) maybeHandleICMP(frame []byte, fio FrameIO) bool {
 	if !ok || dst == ns.cfg.GatewayIP || dst == ns.cfg.DNSIP {
 		return false
 	}
+	src, _ := netip.AddrFromSlice(ip.SrcIP.To4())
 	if !ns.cfg.allowDest(dst) {
-		ns.cfg.Logf("icmp: denied egress to %s", dst)
+		ns.cfg.Logf("icmp deny  %s -> %s", src, dst)
 		return true
 	}
 	select {
 	case ns.pings <- struct{}{}:
 	default:
-		ns.cfg.Logf("icmp: over %d pings in flight, dropping echo to %s", maxPings, dst)
+		ns.cfg.Logf("icmp drop  %s -> %s (over %d pings in flight)", src, dst, maxPings)
 		return true
 	}
-	go ns.proxyPing(fio, dst, eth, ip, req)
+	go ns.proxyPing(fio, src, dst, eth, ip, req)
 	return true
 }
 
 // proxyPing performs one echo round-trip and writes the reply frame back
 // to the guest. Errors (timeouts, unreachable ping sockets) surface to
 // the guest as packet loss, which is what ping expects.
-func (ns *netstack) proxyPing(fio FrameIO, dst netip.Addr, ethReq *layers.Ethernet, ipReq *layers.IPv4, req *layers.ICMPv4) {
+func (ns *netstack) proxyPing(fio FrameIO, src, dst netip.Addr, ethReq *layers.Ethernet, ipReq *layers.IPv4, req *layers.ICMPv4) {
 	defer func() { <-ns.pings }()
 	ctx, cancel := context.WithTimeout(ns.ctx, pingTimeout)
 	defer cancel()
+	ns.flowf("icmp echo  %s -> %s (seq=%d, %d B)", src, dst, req.Seq, len(req.Payload))
+	start := time.Now()
 	data, err := ns.cfg.Ping(ctx, dst, int(req.Seq), req.Payload)
 	if err != nil {
-		ns.cfg.Logf("icmp: echo %s: %v", dst, err)
+		ns.cfg.Logf("icmp fail  %s -> %s (seq=%d): %v", src, dst, req.Seq, err)
 		return
 	}
+	ns.flowf("icmp reply %s <- %s (seq=%d, %s)", src, dst, req.Seq, formatDur(time.Since(start)))
 	eth := layers.Ethernet{
 		SrcMAC:       ns.cfg.GatewayMAC,
 		DstMAC:       ethReq.SrcMAC,
