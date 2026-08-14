@@ -23,8 +23,7 @@ const (
 // world and proxies them over an unprivileged ping socket, at the frame
 // level like DHCP. Echoes to the stack's own addresses fall through to
 // the netstack, which answers them itself (gateway ping).
-func (ns *netstack) maybeHandleICMP(frame []byte, fio FrameIO) bool {
-	pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, gopacket.Default)
+func (ns *netstack) maybeHandleICMP(pkt gopacket.Packet, fio FrameIO) bool {
 	eth, ok := pkt.LinkLayer().(*layers.Ethernet)
 	if !ok {
 		return false
@@ -52,41 +51,59 @@ func (ns *netstack) maybeHandleICMP(frame []byte, fio FrameIO) bool {
 		ns.cfg.Logf("icmp drop  %s -> %s (over %d pings in flight)", src, dst, maxPings)
 		return true
 	}
-	go ns.proxyPing(fio, src, dst, eth, ip, req)
+	go ns.proxyPing(fio, echoReq{
+		guestMAC: append(net.HardwareAddr(nil), eth.SrcMAC...),
+		src:      src,
+		dst:      dst,
+		id:       req.Id,
+		seq:      req.Seq,
+		payload:  append([]byte(nil), req.Payload...),
+	})
 	return true
+}
+
+// echoReq is everything proxyPing needs from a guest echo request,
+// copied out of the parsed layers. The layers point into the frame
+// buffer, whose lifetime ends when dispatch returns, so nothing from
+// them may cross this goroutine boundary by reference.
+type echoReq struct {
+	guestMAC net.HardwareAddr
+	src, dst netip.Addr
+	id, seq  uint16
+	payload  []byte
 }
 
 // proxyPing performs one echo round-trip and writes the reply frame back
 // to the guest. Errors (timeouts, unreachable ping sockets) surface to
 // the guest as packet loss, which is what ping expects.
-func (ns *netstack) proxyPing(fio FrameIO, src, dst netip.Addr, ethReq *layers.Ethernet, ipReq *layers.IPv4, req *layers.ICMPv4) {
+func (ns *netstack) proxyPing(fio FrameIO, req echoReq) {
 	defer func() { <-ns.pings }()
 	ctx, cancel := context.WithTimeout(ns.ctx, pingTimeout)
 	defer cancel()
-	ns.flowf("icmp echo  %s -> %s (seq=%d, %d B)", src, dst, req.Seq, len(req.Payload))
+	ns.flowf("icmp echo  %s -> %s (seq=%d, %d B)", req.src, req.dst, req.seq, len(req.payload))
 	start := time.Now()
-	data, err := ns.cfg.Ping(ctx, dst, int(req.Seq), req.Payload)
+	data, err := ns.cfg.Ping(ctx, req.dst, int(req.seq), req.payload)
 	if err != nil {
-		ns.cfg.Logf("icmp fail  %s -> %s (seq=%d): %v", src, dst, req.Seq, err)
+		ns.cfg.Logf("icmp fail  %s -> %s (seq=%d): %v", req.src, req.dst, req.seq, err)
 		return
 	}
-	ns.flowf("icmp reply %s <- %s (seq=%d, %s)", src, dst, req.Seq, formatDur(time.Since(start)))
+	ns.flowf("icmp reply %s <- %s (seq=%d, %s)", req.src, req.dst, req.seq, formatDur(time.Since(start)))
 	eth := layers.Ethernet{
 		SrcMAC:       ns.cfg.GatewayMAC,
-		DstMAC:       ethReq.SrcMAC,
+		DstMAC:       req.guestMAC,
 		EthernetType: layers.EthernetTypeIPv4,
 	}
 	ip := layers.IPv4{
 		Version:  4,
 		TTL:      64,
 		Protocol: layers.IPProtocolICMPv4,
-		SrcIP:    ipReq.DstIP,
-		DstIP:    ipReq.SrcIP,
+		SrcIP:    net.IP(req.dst.AsSlice()),
+		DstIP:    net.IP(req.src.AsSlice()),
 	}
 	reply := layers.ICMPv4{
 		TypeCode: layers.CreateICMPv4TypeCode(layers.ICMPv4TypeEchoReply, 0),
-		Id:       req.Id,
-		Seq:      req.Seq,
+		Id:       req.id,
+		Seq:      req.seq,
 	}
 	buf := gopacket.NewSerializeBuffer()
 	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}

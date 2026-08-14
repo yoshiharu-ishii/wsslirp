@@ -14,8 +14,7 @@ const leaseSeconds = 86400
 // maybeHandleDHCP answers DHCP requests at the frame level, before the
 // netstack sees them. Broadcast UDP handling inside netstack is subtle;
 // answering here keeps the DHCP path deterministic and trivially testable.
-func (ns *netstack) maybeHandleDHCP(frame []byte, fio FrameIO) bool {
-	pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, gopacket.Default)
+func (ns *netstack) maybeHandleDHCP(pkt gopacket.Packet, fio FrameIO) bool {
 	req, ok := pkt.Layer(layers.LayerTypeDHCPv4).(*layers.DHCPv4)
 	if !ok || req.Operation != layers.DHCPOpRequest {
 		return false
@@ -42,12 +41,11 @@ func (ns *netstack) maybeHandleDHCP(frame []byte, fio FrameIO) bool {
 	return true
 }
 
-// isArpForGuest reports whether frame is an ARP request asking about the
+// isArpForGuest reports whether pkt is an ARP request asking about the
 // guest's own IP (including RFC 5227 address-conflict probes with a zero
 // sender). Nobody on a real LAN would answer those unless the address is
 // actually taken, so the relay must stay silent too.
-func (ns *netstack) isArpForGuest(frame []byte) bool {
-	pkt := gopacket.NewPacket(frame, layers.LayerTypeEthernet, gopacket.Default)
+func (ns *netstack) isArpForGuest(pkt gopacket.Packet) bool {
 	arp, ok := pkt.Layer(layers.LayerTypeARP).(*layers.ARP)
 	if !ok || arp.Operation != layers.ARPRequest {
 		return false
