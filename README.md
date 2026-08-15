@@ -1,5 +1,7 @@
 # wsslirp
 
+[![CI](https://github.com/yoshiharu-ishii/wsslirp/actions/workflows/ci.yml/badge.svg)](https://github.com/yoshiharu-ishii/wsslirp/actions/workflows/ci.yml)
+
 Ethernetフレームを吐く非特権ゲストのための **SLiRP backend**(ユーザーモードNATデーモン)。
 
 ブラウザで動くエミュレータ([rustx86](https://github.com/yoshiharu-ishii/rustx86) WASM版)は生ソケットを持てない。そこでゲストOSの仮想NICが吐くEthernetフレームをWebSocketでそのまま運び、サーバー側のgVisor netstackでTCP/UDPを終端して、本物のソケットでインターネットへ出る。QEMUの `-netdev user`(内蔵slirp)を独立デーモンに切り出し、WebSocketという口を付けたもの、と考えると正確。
@@ -57,6 +59,20 @@ slirp互換のレイアウト。ゲストごとに独立したスタックを作
 - egressフィルタ: loopback・RFC1918・リンクローカル・マルチキャスト宛を遮断(SSRF対策)。TCP・UDP・外向きICMP echoすべてに適用。開発時のみ `-allow-private` で解除
 - ゲストのフレームは全てユーザーランドで処理され、ホストのネットワークスタックには触れない
 
+## 導入
+
+[Releases](https://github.com/yoshiharu-ishii/wsslirp/releases) からビルド済みバイナリを取る(linux/darwin × amd64/arm64):
+
+```
+tar xzf wsslirpd-v0.1.0-linux-amd64.tar.gz && ./wsslirpd-v0.1.0-linux-amd64/wsslirpd -version
+```
+
+ソースからなら:
+
+```
+go install github.com/yoshiharu-ishii/wsslirp/cmd/wsslirpd@latest
+```
+
 ## 使い方
 
 ```
@@ -70,6 +86,20 @@ go run ./cmd/wsslirpd -listen 127.0.0.1:8087 -token <secret>
 | `-allow-private` | プライベート宛egress許可(開発用) |
 | `-upstream-dns` | 上流リゾルバ host:port(デフォルト: resolv.conf → 1.1.1.1:53) |
 | `-log-flows` | フローログ(デフォルト有効。`-log-flows=false` で停止) |
+| `-version` | バージョンを表示して終了 |
+
+起動ログの1行目にバージョンが出る。**止め忘れた古いデーモンが同じポートに居座っていると新しい方のバグに見える**ので、まずここを見る:
+
+```
+2026/08/15 09:00:00 wsslirpd v0.1.0 listening on 127.0.0.1:8087 (endpoint /net)
+```
+
+タグ無しのビルドは `dev-<commit>` になり、未コミットの変更があれば `dev-a1b2c3d-dirty` と自己申告する。
+
+## 開発
+
+- mainは保護されている。変更はブランチ + PRで、CI(gofmt / vet / test / race / bench)の通過が必須
+- リリースは `v*` タグのpushで [Release workflow](.github/workflows/release.yml) が走り、バイナリとchecksumsを添付する
 
 ## フローログ
 

@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: go test ./... -timeout 5m
+
+      # The frame path is full of goroutines handing buffers around, and
+      # the dispatch parse is NoCopy: races here are the failure mode
+      # that unit tests alone would miss.
+      - name: test (race)
+        run: go test -race ./... -timeout 10m
+
+      # Benchmarks are compiled but not measured; this only keeps them
+      # from rotting. CI timings are worthless as numbers.
+      - name: benchmarks compile and run once
+        run: go test ./... -run '^$' -bench . -benchtime 1x -timeout 5m
