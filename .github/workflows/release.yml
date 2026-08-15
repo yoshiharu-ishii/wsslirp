@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: test
+        run: go test ./... -timeout 5m
+
+      - name: build binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os=${target%/*}
+            arch=${target#*/}
+            name="wsslirpd-${VERSION}-${os}-${arch}"
+            echo "building $name"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "dist/${name}/wsslirpd" ./cmd/wsslirpd
+            cp README.md LICENSE "dist/${name}/" 2>/dev/null || cp README.md "dist/${name}/"
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+            rm -rf "dist/${name}"
+          done
+          cd dist && sha256sum *.tar.gz > checksums.txt && cat checksums.txt
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            dist/*.tar.gz dist/checksums.txt
