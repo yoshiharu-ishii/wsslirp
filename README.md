@@ -138,6 +138,10 @@ go test ./...
 WSSLIRP_E2E_URL='ws://127.0.0.1:8098/net?token=test' go test ./pkg/wsstransport -run RealInternet -v
 ```
 
+## ライセンス
+
+[MIT](LICENSE)
+
 ## ロードマップ(台帳)
 
 未実装。必要になった実測時点で取り出す:

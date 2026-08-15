@@ -36,7 +36,7 @@ jobs:
               -trimpath \
               -ldflags "-s -w -X main.version=${VERSION}" \
               -o "dist/${name}/wsslirpd" ./cmd/wsslirpd
-            cp README.md LICENSE "dist/${name}/" 2>/dev/null || cp README.md "dist/${name}/"
+            cp README.md LICENSE "dist/${name}/"
             tar -C dist -czf "dist/${name}.tar.gz" "${name}"
             rm -rf "dist/${name}"
           done
